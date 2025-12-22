@@ -42,5 +42,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     color = renderLightGizmos(fragCoord, state, viewProj, iResolution. xy, color);
     color = renderUI(fragCoord, state, iTime, iResolution.xy, color);
     
+    // 渲染 Color Picker（只在有选中时显示）
+    bool showPicker = state.selectedId >= 0;
+    color = drawPicker(color, state.pickerHSV, fragCoord, iResolution.xy, showPicker);
+    
     fragColor = vec4(color, 1.0);
 }

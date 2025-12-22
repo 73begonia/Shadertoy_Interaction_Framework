@@ -83,6 +83,7 @@ const float TRANSFORM_SCALE     = 3.0;
 const float MODE_NONE      = 0.0;
 const float MODE_CAMERA    = 1.0;
 const float MODE_TRANSFORM = 2.0;
+const float MODE_PICKER    = 3.0;
 
 const int KEY_W = 87;
 const int KEY_A = 65;
@@ -108,6 +109,22 @@ const float LIGHT_TYPE_AREA  = 2.0;
 
 const float TARGET_OBJECT = 0.0;
 const float TARGET_LIGHT  = 1.0;
+
+//=============================================================================
+// Color Picker 配置
+//=============================================================================
+
+struct Picker {
+    vec2  cen; // center
+    float wid; // width
+    float mar; // markers
+};
+
+const Picker kPicker = Picker(vec2(1.1, -0.55), 0.18, 0.022);
+
+//=============================================================================
+// UI 常量
+//=============================================================================
 
 #define UI_NONE 0
 #define UI_ADD_SPHERE 1
@@ -176,6 +193,7 @@ struct FrameState {
     bool  showGizmos;
     int   objectCount;
     int   lightCount;
+    vec3  pickerHSV;
     Transform transforms[MAX_PICKABLE_COUNT];
     Light lights[MAX_LIGHT_COUNT];
 };
@@ -332,6 +350,168 @@ vec3 randomColor(int seed) {
         fract(sin(float(seed) * 78.233) * 43758.5453),
         fract(sin(float(seed) * 45.164) * 43758.5453)
     ) * 0.5 + 0.3;
+}
+
+//=============================================================================
+// Color Picker 函数
+//=============================================================================
+
+// HSV 转 RGB
+vec3 hsv2rgb(vec3 hsv) {
+    vec3 rgb = clamp(abs(mod(hsv.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    return hsv.z * mix(vec3(1.0), rgb, hsv.y);
+}
+
+// RGB 转 HSV
+vec3 rgb2hsv(vec3 rgb) {
+    float cmax = max(rgb.r, max(rgb.g, rgb.b));
+    float cmin = min(rgb.r, min(rgb.g, rgb.b));
+    float delta = cmax - cmin;
+    
+    float h = 0.0;
+    if (delta > 0.0001) {
+        if (cmax == rgb.r) {
+            h = mod((rgb.g - rgb.b) / delta, 6.0);
+        } else if (cmax == rgb.g) {
+            h = (rgb.b - rgb.r) / delta + 2.0;
+        } else {
+            h = (rgb.r - rgb.g) / delta + 4.0;
+        }
+        h /= 6.0;
+    }
+    
+    float s = (cmax > 0.0001) ? (delta / cmax) : 0.0;
+    float v = cmax;
+    
+    return vec3(h, s, v);
+}
+
+// 从坐标获取 H 值
+float c2d_to_h(vec2 c2d) {
+    return clamp(c2d.y, 0.0, 1.0);
+}
+
+// 从坐标获取 SV 值
+vec2 c2d_to_sv(vec2 c2d) {
+    return clamp(c2d, 0.0, 1.0);
+}
+
+// Picker 的 SDF
+float sdPickerBox(vec2 p, vec2 res) {
+    vec2 q = (p / res.xy * 2.0 - 1.0) * vec2(res.x / res.y, 1.0);
+    
+    // SV 方块 (左侧)
+    vec2 sv_pos = kPicker.cen - vec2(kPicker.wid * 0.6, 0.0);
+    float sv_box = length(max(abs(q - sv_pos) - vec2(kPicker.wid * 0.8), 0.0));
+    
+    // H 条 (右侧)
+    vec2 h_pos = kPicker.cen + vec2(kPicker.wid * 0.6, 0.0);
+    float h_bar = length(max(abs(q - h_pos) - vec2(kPicker.wid * 0.15, kPicker.wid * 0.8), 0.0));
+    
+    return min(sv_box, h_bar);
+}
+
+// 检测 Picker 点击
+bool checkPickerClick(vec2 fragCoord, vec2 res, out int pickerMode) {
+    vec2 q = (fragCoord / res.xy * 2.0 - 1.0) * vec2(res.x / res.y, 1.0);
+    
+    // SV 方块 (左侧)
+    vec2 sv_pos = kPicker.cen - vec2(kPicker.wid * 0.6, 0.0);
+    if (all(lessThan(abs(q - sv_pos), vec2(kPicker.wid * 0.8)))) {
+        pickerMode = 1; // SV mode
+        return true;
+    }
+    
+    // H 条 (右侧)
+    vec2 h_pos = kPicker.cen + vec2(kPicker.wid * 0.6, 0.0);
+    if (all(lessThan(abs(q - h_pos), vec2(kPicker.wid * 0.15, kPicker.wid * 0.8)))) {
+        pickerMode = 2; // H mode
+        return true;
+    }
+    
+    pickerMode = 0;
+    return false;
+}
+
+// 获取拖动时的 HSV 值
+vec3 getPickerHSV(vec2 fragCoord, vec2 res, vec3 currentHSV, int pickerMode) {
+    vec2 q = (fragCoord / res.xy * 2.0 - 1.0) * vec2(res.x / res.y, 1.0);
+    vec3 newHSV = currentHSV;
+    
+    if (pickerMode == 1) {
+        // SV mode
+        vec2 sv_pos = kPicker.cen - vec2(kPicker.wid * 0.6, 0.0);
+        vec2 c2d = (q - sv_pos + vec2(kPicker.wid * 0.8)) / (kPicker.wid * 1.6);
+        vec2 sv = c2d_to_sv(c2d);
+        newHSV.y = sv.x;
+        newHSV.z = 1.0 - sv.y;
+    } else if (pickerMode == 2) {
+        // H mode
+        vec2 h_pos = kPicker.cen + vec2(kPicker.wid * 0.6, 0.0);
+        vec2 c2d = (q - h_pos + vec2(kPicker.wid * 0.15, kPicker.wid * 0.8)) / vec2(kPicker.wid * 0.3, kPicker.wid * 1.6);
+        newHSV.x = 1.0 - c2d_to_h(c2d.y);
+    }
+    
+    return newHSV;
+}
+
+// 绘制 Color Picker
+vec3 drawPicker(vec3 baseColor, vec3 pickerHSV, vec2 fragCoord, vec2 res, bool showPicker) {
+    if (!showPicker) return baseColor;
+    
+    vec2 q = (fragCoord / res.xy * 2.0 - 1.0) * vec2(res.x / res.y, 1.0);
+    
+    // SV 方块 (左侧)
+    vec2 sv_pos = kPicker.cen - vec2(kPicker.wid * 0.6, 0.0);
+    vec2 sv_min = sv_pos - vec2(kPicker.wid * 0.8);
+    vec2 sv_max = sv_pos + vec2(kPicker.wid * 0.8);
+    
+    if (all(greaterThan(q, sv_min)) && all(lessThan(q, sv_max))) {
+        vec2 c2d = (q - sv_min) / (sv_max - sv_min);
+        vec2 sv = c2d_to_sv(c2d);
+        vec3 color = hsv2rgb(vec3(pickerHSV.x, sv.x, 1.0 - sv.y));
+        
+        // 边框
+        vec2 border = abs(q - sv_pos) - vec2(kPicker.wid * 0.8);
+        if (max(border.x, border.y) > -0.01) {
+            color = vec3(0.2);
+        }
+        
+        // 当前选中的标记
+        vec2 marker_pos = sv_pos + (vec2(pickerHSV.y, 1.0 - pickerHSV.z) * 2.0 - 1.0) * vec2(kPicker.wid * 0.8);
+        if (length(q - marker_pos) < kPicker.mar) {
+            color = vec3(1.0) - color;
+        }
+        
+        return color;
+    }
+    
+    // H 条 (右侧)
+    vec2 h_pos = kPicker.cen + vec2(kPicker.wid * 0.6, 0.0);
+    vec2 h_min = h_pos - vec2(kPicker.wid * 0.15, kPicker.wid * 0.8);
+    vec2 h_max = h_pos + vec2(kPicker.wid * 0.15, kPicker.wid * 0.8);
+    
+    if (all(greaterThan(q, h_min)) && all(lessThan(q, h_max))) {
+        vec2 c2d = (q - h_min) / (h_max - h_min);
+        float h = 1.0 - c2d_to_h(c2d.y);
+        vec3 color = hsv2rgb(vec3(h, 1.0, 1.0));
+        
+        // 边框
+        vec2 border = abs(q - h_pos) - vec2(kPicker.wid * 0.15, kPicker.wid * 0.8);
+        if (max(border.x, border.y) > -0.01) {
+            color = vec3(0.2);
+        }
+        
+        // 当前选中的标记
+        float marker_y = h_pos.y + (1.0 - pickerHSV.x * 2.0) * kPicker.wid * 0.8;
+        if (abs(q.y - marker_y) < kPicker.mar * 0.5 && abs(q.x - h_pos.x) < kPicker.wid * 0.15) {
+            color = vec3(1.0) - color;
+        }
+        
+        return color;
+    }
+    
+    return baseColor;
 }
 
 //=============================================================================
@@ -940,6 +1120,9 @@ FrameState loadFrameState(sampler2D buf) {
     vec4 cnt = loadState(buf, ivec2(1, ROW_COUNTS));
     st.objectCount = int(cnt.x);
     st.lightCount = int(cnt. y);
+    
+    vec4 pickerData = loadState(buf, ivec2(5, ROW_KEYS));
+    st.pickerHSV = pickerData.xyz;
     
     for (int i = 0; i < MAX_PICKABLE_COUNT; i++) {
         vec4 tp = loadState(buf, ivec2(i, ROW_OBJ_POS));
