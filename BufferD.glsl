@@ -45,6 +45,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec3 focusTarget = loadSelf(ivec2(2, ROW_KEYS)).xyz;
     vec4 focusAnglesData = loadSelf(ivec2(3, ROW_KEYS));
     vec4 prevKeyState2 = loadSelf(ivec2(4, ROW_KEYS));
+    vec4 pickerData = loadSelf(ivec2(5, ROW_KEYS));
+    vec3 pickerHSV = pickerData.xyz;
+    int pickerMode = int(pickerData.w);
     
     vec4 countsData = loadSelf(ivec2(0, ROW_COUNTS));
     vec3 focusStartPos = countsData.xyz;
@@ -137,6 +140,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         }
         else if (px. y == ROW_KEYS) {
             if (px. x == 1) fragColor = vec4(0.0, 0.0, 1.0, 0.0); // showGizmos = true
+            else if (px.x == 5) fragColor = vec4(0.0, 1.0, 1.0, 0.0); // 初始 HSV (白色)
             else fragColor = vec4(0.0);
         }
         else if (px.y == ROW_COUNTS) {
@@ -280,6 +284,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 selectedId = float(id);
                 selectedType = TARGET_OBJECT;
                 transformMode = TRANSFORM_TRANSLATE;
+                pickerHSV = rgb2hsv(colors[id]);
             }
             else if (uiAction == UI_ADD_BOX && objectCount < MAX_PICKABLE_COUNT) {
                 int id = objectCount;
@@ -292,6 +297,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 selectedId = float(id);
                 selectedType = TARGET_OBJECT;
                 transformMode = TRANSFORM_TRANSLATE;
+                pickerHSV = rgb2hsv(colors[id]);
             }
             else if (uiAction == UI_ADD_POINT_LIGHT && lightCount < MAX_LIGHT_COUNT) {
                 int id = lightCount;
@@ -307,6 +313,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 selectedId = float(id);
                 selectedType = TARGET_LIGHT;
                 transformMode = TRANSFORM_TRANSLATE;
+                pickerHSV = rgb2hsv(lightColors[id]);
             }
             else if (uiAction == UI_ADD_SPOT_LIGHT && lightCount < MAX_LIGHT_COUNT) {
                 int id = lightCount;
@@ -322,6 +329,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 selectedId = float(id);
                 selectedType = TARGET_LIGHT;
                 transformMode = TRANSFORM_TRANSLATE;
+                pickerHSV = rgb2hsv(lightColors[id]);
             }
             else if (uiAction == UI_ADD_AREA_LIGHT && lightCount < MAX_LIGHT_COUNT) {
                 int id = lightCount;
@@ -337,6 +345,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 selectedId = float(id);
                 selectedType = TARGET_LIGHT;
                 transformMode = TRANSFORM_TRANSLATE;
+                pickerHSV = rgb2hsv(lightColors[id]);
             }
             else if (uiAction == UI_DELETE && hasSelection) {
                 int id = int(selectedId);
@@ -361,42 +370,62 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 shouldStartFocus = true;
             }
             else if (uiAction == UI_NONE) {
-                for (int i = 0; i < MAX_PICKABLE_COUNT; i++) {
-                    transforms[i].type = types[i];
-                    transforms[i].position = positions[i];
-                }
-                for (int i = 0; i < MAX_LIGHT_COUNT; i++) {
-                    lights[i].type = lightTypes[i];
-                    lights[i].position = lightPositions[i];
-                    lights[i].direction = lightDirections[i];
-                    lights[i].angle = lightAngles[i];
-                    lights[i].areaSize = lightAreaSizes[i];
-                }
-                
-                Ray ray = Ray(camPos, rayDir);
-                HitResult hit = pickScene(ray, transforms, objectCount, lights, lightCount);
-                
-                if (hit. hit && hit.objectId >= 0) {
-                    selectedId = float(hit.objectId);
-                    selectedType = hit.targetType;
-                    mode = MODE_TRANSFORM;
-                    dragStartData. xy = iMouse.xy;
-                    
-                    if (transformMode == TRANSFORM_TRANSLATE) {
-                        dragDepthData = vec4(hit.t, hit.hitPoint);
-                    } else if (transformMode == TRANSFORM_SCALE && selectedType == TARGET_OBJECT) {
-                        int id = hit.objectId;
-                        dragStartData.z = (scales[id].x + scales[id].y + scales[id].z) / 3.0;
-                    } else if (transformMode == TRANSFORM_SCALE && selectedType == TARGET_LIGHT) {
-                        int id = hit.objectId;
-                        dragStartData.z = lightRanges[id];
-                        dragStartData.w = (lightAreaSizes[id]. x + lightAreaSizes[id].y) / 2.0;
+                // 如果有选中对象，先检查是否点击了 picker
+                bool pickerClicked = false;
+                if (hasSelection) {
+                    int clickedPickerMode = 0;
+                    pickerClicked = checkPickerClick(iMouse.xy, iResolution.xy, clickedPickerMode);
+                    if (pickerClicked) {
+                        mode = MODE_PICKER;
+                        pickerMode = clickedPickerMode;
                     }
-                } else {
-                    selectedId = -1.0;
-                    mode = MODE_CAMERA;
-                    mouseState. xy = iMouse. xy;
-                    angles. zw = angles.xy;
+                }
+                
+                if (!pickerClicked) {
+                    for (int i = 0; i < MAX_PICKABLE_COUNT; i++) {
+                        transforms[i].type = types[i];
+                        transforms[i].position = positions[i];
+                    }
+                    for (int i = 0; i < MAX_LIGHT_COUNT; i++) {
+                        lights[i].type = lightTypes[i];
+                        lights[i].position = lightPositions[i];
+                        lights[i].direction = lightDirections[i];
+                        lights[i].angle = lightAngles[i];
+                        lights[i].areaSize = lightAreaSizes[i];
+                    }
+                    
+                    Ray ray = Ray(camPos, rayDir);
+                    HitResult hit = pickScene(ray, transforms, objectCount, lights, lightCount);
+                    
+                    if (hit. hit && hit.objectId >= 0) {
+                        selectedId = float(hit.objectId);
+                        selectedType = hit.targetType;
+                        mode = MODE_TRANSFORM;
+                        dragStartData. xy = iMouse.xy;
+                        
+                        // 同步颜色到 picker
+                        if (selectedType == TARGET_OBJECT) {
+                            pickerHSV = rgb2hsv(colors[hit.objectId]);
+                        } else {
+                            pickerHSV = rgb2hsv(lightColors[hit.objectId]);
+                        }
+                        
+                        if (transformMode == TRANSFORM_TRANSLATE) {
+                            dragDepthData = vec4(hit.t, hit.hitPoint);
+                        } else if (transformMode == TRANSFORM_SCALE && selectedType == TARGET_OBJECT) {
+                            int id = hit.objectId;
+                            dragStartData.z = (scales[id].x + scales[id].y + scales[id].z) / 3.0;
+                        } else if (transformMode == TRANSFORM_SCALE && selectedType == TARGET_LIGHT) {
+                            int id = hit.objectId;
+                            dragStartData.z = lightRanges[id];
+                            dragStartData.w = (lightAreaSizes[id]. x + lightAreaSizes[id].y) / 2.0;
+                        }
+                    } else {
+                        selectedId = -1.0;
+                        mode = MODE_CAMERA;
+                        mouseState. xy = iMouse. xy;
+                        angles. zw = angles.xy;
+                    }
                 }
             }
         }
@@ -408,6 +437,19 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                 angles. y = angles.w - delta.x / iResolution.x * MOUSE_SENSITIVITY_X;
                 angles.y = mod(angles.y, TAU);
                 camDir = anglesToDirection(angles.xy);
+            }
+            else if (mode == MODE_PICKER && hasSelection) {
+                // 更新 pickerHSV
+                pickerHSV = getPickerHSV(iMouse.xy, iResolution.xy, pickerHSV, pickerMode);
+                
+                // 同时更新选中对象的颜色
+                int id = int(selectedId);
+                vec3 newColor = hsv2rgb(pickerHSV);
+                if (selectedType == TARGET_OBJECT) {
+                    colors[id] = newColor;
+                } else {
+                    lightColors[id] = newColor;
+                }
             }
             else if (mode == MODE_TRANSFORM && hasSelection) {
                 int id = int(selectedId);
@@ -558,6 +600,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         else if (px.x == 2) fragColor = vec4(focusTarget, 0.0);
         else if (px. x == 3) fragColor = vec4(focusTargetAngles, focusStartAngles);
         else if (px.x == 4) fragColor = vec4(currKeyV ? 1.0 : 0.0, 0.0, 0.0, 0.0);
+        else if (px.x == 5) fragColor = vec4(pickerHSV, float(pickerMode));
         else fragColor = vec4(0.0);
     }
     else if (px.y == ROW_COUNTS) {
