@@ -387,8 +387,8 @@ vec3 rgb2hsv(vec3 rgb) {
 }
 
 // 从坐标获取 H 值
-float c2d_to_h(vec2 c2d) {
-    return clamp(c2d.y, 0.0, 1.0);
+float c2d_to_h(float y) {
+    return clamp(y, 0.0, 1.0);
 }
 
 // 从坐标获取 SV 值
@@ -1095,8 +1095,6 @@ HitResult pickScene(Ray ray, Transform tr[MAX_PICKABLE_COUNT], int oc, Light lt[
 // 状态读取
 //=============================================================================
 
-#ifndef IS_BUFFER_A
-
 vec4 loadState(sampler2D buf, ivec2 p) {
     return texelFetch(buf, p, 0);
 }
@@ -1157,8 +1155,6 @@ FrameState loadFrameState(sampler2D buf) {
     
     return st;
 }
-
-#endif
 
 //=============================================================================
 // UI
@@ -1563,10 +1559,6 @@ vec3 applySelectionHighlight(vec3 col, vec3 rd, vec3 n, float tt, float tm, floa
 //=============================================================================
 // 状态缓冲区处理
 //=============================================================================
-
-#ifdef IS_STATE_BUFFER
-
-#define IS_BUFFER_A
 
 bool isKeyPressed(int keyCode, sampler2D keyboardChannel) {
     return texelFetch(keyboardChannel, ivec2(keyCode, 0), 0).x > 0.0;
@@ -2216,13 +2208,9 @@ vec4 processStateBuffer(vec2 fragCoord, vec2 resolution, vec4 mouse, int frame, 
     }
 }
 
-#endif
-
 //=============================================================================
 // 场景渲染
 //=============================================================================
-
-#ifndef IS_STATE_BUFFER
 
 vec4 renderScene(vec2 fragCoord, vec2 resolution, float time, sampler2D stateChannel) {
     FrameState state = loadFrameState(stateChannel);
@@ -2274,5 +2262,3 @@ vec4 renderScene(vec2 fragCoord, vec2 resolution, float time, sampler2D stateCha
     
     return vec4(color, 1.0);
 }
-
-#endif
